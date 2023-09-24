@@ -13,7 +13,7 @@ namespace OpenSC4
         {   Console.WriteLine("=== Start of SC4 LOAD Script ===");
             Console.WriteLine("");
 
-            string path = Environment.CurrentDirectory + "\\Test Files\\City - B Terra.sc4";
+            string path = Environment.CurrentDirectory + "\\Test Files\\City - Mesa Canyon.sc4";
 
             Console.WriteLine("Loading file: " + path);
             Console.WriteLine("");
@@ -85,6 +85,11 @@ namespace OpenSC4
                     Console.WriteLine("> Decompressed file size: " + UintHexLog(terrainDataDecompressedSize));
                     Console.WriteLine("");
                 }
+                else
+                {
+                    Console.WriteLine("No Compressed TerrainData found.");
+                    Console.WriteLine("");
+                }
             }
             else
             {
@@ -126,40 +131,6 @@ namespace OpenSC4
 
                     terrainData = DecompressDBPF(terrainFileBuffer, terrainFileOffset, terrainFileSize, terrainDataDecompressedSize);
                     Console.WriteLine("terrainData Has been decompressed...");
-
-                    // ignore first two bytes
-
-                    // cast to single (32 bit float)
-                    Single[] points = new Single[(terrainData.Length - (terrainData.Length % 4)) / 4];
-
-                    for (int i = 0; i < points.Length; i++)
-                    {
-                        points[i] = ToSingleBigEndian(terrainData, (i * 4) + 2);
-                    }
-
-                    Console.WriteLine("Floating points extracted..");
-
-                    // cast onto X by Y grid ? (2d array maybe?)
-                    if(Math.Sqrt(points.Length) % 1 == 0)
-                    {
-                        int gridSize = (int)Math.Sqrt(points.Length);
-
-                        Single[,] grid = new Single[gridSize, gridSize];
-
-                        for (int i = 0; i < gridSize; i++)
-                        {
-                            for (int j = 0; j < gridSize; j++)
-                            {
-                                int k = i + j * gridSize;
-                                grid[i, j] = points[k];
-                            }
-                        }
-                        Console.WriteLine("Casting to grid..");
-                    }
-                    else
-                    {
-                        Console.WriteLine("Terrain Data is not square");
-                    }
                 }
                 else
                 {
@@ -167,11 +138,46 @@ namespace OpenSC4
                     Console.WriteLine("");
 
                     terrainData = new byte[terrainFileSize];
+                    terrainData = terrainFileBuffer;
+
                 }
 
                 Console.WriteLine("Loaded Terrain Data successfully!");
                 Console.WriteLine("");
+                Console.WriteLine("Extracting floating point data (terrain height)...");
+                // ignore first two bytes
 
+                // cast to single (32 bit float)
+                Single[] points = new Single[(terrainData.Length - (terrainData.Length % 4)) / 4];
+
+                for (int i = 0; i < points.Length; i++)
+                {
+                    points[i] = ToSingleBigEndian(terrainData, (i * 4) + 2);
+                }
+
+                Console.WriteLine("Floating points extracted!");
+                Console.WriteLine("Casting to grid..");
+                // cast onto X by Y grid ? (2d array maybe?)
+                if (Math.Sqrt(points.Length) % 1 == 0)
+                {
+                    int gridSize = (int)Math.Sqrt(points.Length);
+
+                    Single[,] grid = new Single[gridSize, gridSize];
+
+                    for (int i = 0; i < gridSize; i++)
+                    {
+                        for (int j = 0; j < gridSize; j++)
+                        {
+                            int k = i + j * gridSize;
+                            grid[i, j] = points[k];
+                        }
+                    }
+                    Console.WriteLine("Data has been casted to a " + gridSize + " square grid.");
+                }
+                else
+                {
+                    Console.WriteLine("Terrain Data is not square");
+                }
             }
             else
             {
