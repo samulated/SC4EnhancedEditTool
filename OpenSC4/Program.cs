@@ -4,14 +4,99 @@ using System.Threading.Tasks;
 using System.IO;
 using System.Security.Cryptography;
 using System.Linq;
+using System.Collections;
+using System.Collections.Generic;
+using System.Net.Http.Headers;
+using System.Dynamic;
+using System.Reflection;
 
 namespace OpenSC4
 {
     class Program
     {
+        public enum SubfileTypes
+        {
+            Directory,      // e86b1eef     e86b1eef    286b1f03
+            TerrainMap,     // a9dd6ff4     e98f9525    00000001
+            NetworkIndex,   // 6a0f82b2     -           -
+            Network1,       // c9c05c6e     -           -
+            Network2,       // ca16374f     -           -
+            Exemplars,      // 6534284a     -           -
+            Unidentified    // all other
+        }
+        public struct SubfileIdentifiers
+        {
+            public SubfileTypes type;
+            public uint typeID;
+            public uint groupID;
+            public uint instanceID;
+            public uint IDdepth;
+        }
+        public static SubfileIdentifiers[] KnownSubfiles = new SubfileIdentifiers[] {
+            new SubfileIdentifiers(){
+                type = SubfileTypes.Directory,
+                typeID = 3899334383,            // e86b1eef
+                groupID = 3899334383,           // e86b1eef
+                instanceID = 678108931,         // 286b1f03
+                IDdepth = 3
+            },
+            new SubfileIdentifiers(){
+                type = SubfileTypes.TerrainMap,
+                typeID = 2849861620,            // a9dd6ff4
+                groupID = 3918501157,           // e98f9525
+                instanceID = 1,                 // 00000001
+                IDdepth = 3
+            },
+            new SubfileIdentifiers(){
+                type = SubfileTypes.NetworkIndex,
+                typeID = 1779401394,            // 6a0f82b2
+             // groupID = 0,
+             // instanceID = 0,
+                IDdepth = 1
+            },
+            new SubfileIdentifiers(){
+                type = SubfileTypes.Network1,
+                typeID = 3384826990,            // c9c05c6e
+             // groupID = 0,
+             // instanceID = 0,
+                IDdepth = 1
+            },
+            new SubfileIdentifiers(){
+                type = SubfileTypes.Network2,
+                typeID = 3390453583,            // ca16374f
+             // groupID = 0,
+             // instanceID = 0,
+                IDdepth = 1
+            },
+            new SubfileIdentifiers(){
+                type = SubfileTypes.Exemplars,
+                typeID = 1697917002,            // 6534284a
+             // groupID = 0,
+             // instanceID = 0,
+                IDdepth = 1
+            }
+        };
+        
+        public struct FileRef
+        {
+            public bool exists;     // exists - has been set
+            public uint position;     // position - offset into file
+            public uint size;     // size - size of referenced file
+        }
+        public struct Subfile
+        {
+            public bool exists;
+            public uint position;
+            public uint size;
+            public bool compressed;
+            public uint decompressedSize;
+            public byte[] data;
+            public SubfileTypes type;
+        }
         static void Main(string[] args)
         {   Console.WriteLine("=== Start of SC4 LOAD Script ===");
             Console.WriteLine("");
+
 
             string path = Environment.CurrentDirectory + "\\Test Files\\City - Mesa Canyon.sc4";
 
@@ -42,25 +127,31 @@ namespace OpenSC4
 
             byte[] buffer32 = new byte[4];
 
-            // get index location
-            open.Seek(40, SeekOrigin.Begin);
-            open.Read(buffer32, 0, 4);
-            uint indexOffset = ToInt32LittleEndian(buffer32, 0);
-
-            Console.WriteLine("> Index Location: " + UintHexLog(indexOffset));
-
-            // get index size
-            open.Seek(44, SeekOrigin.Begin);
-            open.Read(buffer32, 0, 4);
-            uint indexSize = ToInt32LittleEndian(buffer32, 0);
-
-            Console.WriteLine("> Index Size: " + UintHexLog(indexSize));
+            // get index ref
+            FileRef index = GetFileIndex(open);
+            
+            Console.WriteLine("> Index Location: " + UintHexLog(index.position));
+            Console.WriteLine("> Index Size: " + UintHexLog(index.size));
 
             Console.WriteLine("");
 
             // 1.5 Check for DIR file (compression on files)
+            FileRef dir = GetDirSubfile(open, index);
 
-            uint[] dirMetafile = CheckForDBPFCompression(indexOffset, indexSize, open);
+            if(dir.exists)
+            {
+                Console.WriteLine("Parts of file are compressed...");
+                Console.WriteLine("> Directory file offset: " + UintHexLog(dir.position));
+                Console.WriteLine("> Directory file size: " + UintHexLog(dir.size));
+                Console.WriteLine("");
+            }
+            else
+            {
+                Console.WriteLine("No compression on the file.");
+                Console.WriteLine("");
+            }
+
+            /* uint[] dirMetafile = CheckForDBPFCompression(indexOffset, indexSize, open);
             uint terrainDataDecompressedSize = 0;
 
             if (dirMetafile[0] != 0)
@@ -95,64 +186,41 @@ namespace OpenSC4
             {
                 Console.WriteLine("No compression on file, proceeding to terrain data.");
                 Console.WriteLine("");
-            }
+            }*/
 
-            // TODO: Decompression!!!  https://wiki.sc4devotion.com/index.php?title=DBPF_Compression
+            // Decompression!!!  https://wiki.sc4devotion.com/index.php?title=DBPF_Compression
 
-            
+
             // 2. Find index listing for Terrain Data
             //
-            uint[] terrainMetafile = FindTerrainData(indexOffset, indexSize, open);
+            Subfile terrainSubfile = LoadSubfile(open, index, dir, SubfileTypes.TerrainMap);
 
-            if (terrainMetafile[0] != 0)
+            if (terrainSubfile.exists)
             {
                 Console.WriteLine("Terrain Data Found!");
-
-                // 3. Get the terrain data chunk
-                uint terrainFileOffset = terrainMetafile[0];
-                uint terrainFileSize = terrainMetafile[1];
-
                 Console.WriteLine("");
-                Console.WriteLine("> Terrain file offset: " + UintHexLog(terrainFileOffset));
-                Console.WriteLine("> Terrain file size: " + UintHexLog(terrainFileSize));
-
-                byte[] terrainData;
-                byte[] terrainFileBuffer = new byte[terrainFileSize];
-
-                open.Seek(terrainFileOffset, SeekOrigin.Begin);
-                open.Read(terrainFileBuffer, 0, (int)terrainFileSize);
-
-                // Check if Compressed
-                if (terrainDataDecompressedSize != 0)
+                Console.WriteLine("> Terrain file offset: " + UintHexLog(terrainSubfile.position));
+                Console.WriteLine("> Terrain file size: " + UintHexLog(terrainSubfile.size));
+                
+                if (terrainSubfile.compressed)
                 {
                     // Decompress terrain file before reading
-                    Console.WriteLine("> Terrain file decompressed size: " + UintHexLog(terrainDataDecompressedSize));
+                    Console.WriteLine("> Terrain file decompressed size: " + UintHexLog(terrainSubfile.decompressedSize));
                     Console.WriteLine("");
-
-                    terrainData = DecompressDBPF(terrainFileBuffer, terrainFileOffset, terrainFileSize, terrainDataDecompressedSize);
-                    Console.WriteLine("terrainData Has been decompressed...");
+                    Console.WriteLine("Terrain Data has been decompressed...");
                 }
-                else
-                {
-                    // Read terrain file without decompressing
-                    Console.WriteLine("");
-
-                    terrainData = new byte[terrainFileSize];
-                    terrainData = terrainFileBuffer;
-
-                }
-
                 Console.WriteLine("Loaded Terrain Data successfully!");
                 Console.WriteLine("");
                 Console.WriteLine("Extracting floating point data (terrain height)...");
+                
                 // ignore first two bytes
 
                 // cast to single (32 bit float)
-                Single[] points = new Single[(terrainData.Length - (terrainData.Length % 4)) / 4];
+                Single[] points = new Single[(terrainSubfile.data.Length - (terrainSubfile.data.Length % 4)) / 4];
 
                 for (int i = 0; i < points.Length; i++)
                 {
-                    points[i] = ToSingleBigEndian(terrainData, (i * 4) + 2);
+                    points[i] = ToSingleBigEndian(terrainSubfile.data, (i * 4) + 2);
                 }
 
                 Console.WriteLine("Floating points extracted!");
@@ -183,8 +251,26 @@ namespace OpenSC4
             {
                 Console.WriteLine("No terrain data..");
             }
-            
 
+            Console.WriteLine("");
+            Console.WriteLine("= = = = =");
+            Console.WriteLine("");
+
+            // 
+            // Network Subfile (Roads)
+            // 
+
+            Console.WriteLine("TODO: Load Network Subfile 1 for Road Placement");
+
+            // Get Network Index
+
+            Console.WriteLine("");
+
+            // 
+            // Exemplars (> Terrain Exemplars > Sea Level)
+            // 
+
+            Console.WriteLine("TODO: Load Exemplar files...");
 
 
             //
@@ -225,12 +311,154 @@ namespace OpenSC4
             string hex = i.ToString("X");
             return i + " | " + hex;
         }
+        public static SubfileTypes ResolveIdentifiers (uint typeID)
+        {
+            foreach (SubfileIdentifiers s in KnownSubfiles)
+            {
+                if (s.typeID == typeID)
+                {
+                    if(s.IDdepth == 1)
+                    {
+                        return s.type;
+                    }
+                    else
+                    {
+                        Console.WriteLine("More than one type found, requires groupID and/or instanceID.");
+                    }
+                }
+            }
+
+            return SubfileTypes.Unidentified;
+        }
+        public static SubfileTypes ResolveIdentifiers(uint typeID, uint groupID)
+        {
+            foreach(SubfileIdentifiers s in KnownSubfiles)
+            {
+                if (s.typeID == typeID)
+                {
+                    if (s.IDdepth >= 2)
+                    {
+                        if(s.groupID == groupID)
+                        {
+                            if (s.IDdepth >= 3)
+                            {
+                                Console.WriteLine("More than one type found, requires instanceID.");
+                            }
+                            else
+                            {
+                                return s.type;
+                            }
+                            
+                        }
+                    }
+                    else
+                    {
+                        return s.type;
+                    }
+                }
+            }
+
+            return SubfileTypes.Unidentified;
+        }
+        public static SubfileTypes ResolveIdentifiers(uint typeID, uint groupID, uint instanceID)
+        {
+            foreach (SubfileIdentifiers s in KnownSubfiles)
+            {
+                if (s.typeID == typeID)
+                {
+                    if (s.IDdepth >= 2)
+                    {
+                        if (s.groupID == groupID)
+                        {
+                            if (s.IDdepth >= 3)
+                            {
+                                if(s.instanceID == instanceID)
+                                {
+                                    return s.type;
+                                }
+                            }
+                            else
+                            {
+                                return s.type;
+                            }
+
+                        }
+                    }
+                    else
+                    {
+                        return s.type;
+                    }
+                }
+            }
+
+            return SubfileTypes.Unidentified;
+        }
+        public static FileRef GetFileIndex(FileStream file)
+        {
+            byte[] buffer32 = new byte[4];          // 32-bit (4 byte) buffer
+            FileRef output = new FileRef();              // output FileRef
+
+            // read index 
+            file.Seek(40, SeekOrigin.Begin);           // index reference is always 40 bytes into a SC4 file
+            
+            // get index position
+            file.Read(buffer32, 0, 4);
+            output.position = ToInt32LittleEndian(buffer32, 0); 
+
+            // get index size
+            file.Read(buffer32, 0, 4);
+            output.size = ToInt32LittleEndian(buffer32, 0);
+
+            // successfully retrieved
+            output.exists = true;
+
+            return output;
+        }
+        public static Subfile LoadSubfile(FileStream file, FileRef index, FileRef dir, SubfileTypes type)
+        {
+            byte[] buffer32 = new byte[4];
+            Subfile output = new Subfile();
+
+            // get pos/size from index
+            FileRef subfileRef = ReadIndex(file, index, type);
+            output.position = subfileRef.position;
+            output.size = subfileRef.size;
+
+            // check if subfile is in the Dir list
+            output.decompressedSize = FindCompressedSubfile(file, dir, type);
+            output.compressed = output.decompressedSize == 0 ? false : true;
+
+            byte[] arbBuf;
+            file.Seek(output.position, SeekOrigin.Begin);
+
+            if (output.compressed)
+            {
+                // if yes, decompress data before loading
+                arbBuf = new byte[output.decompressedSize];
+                file.Read(arbBuf, 0, (int)output.decompressedSize);
+
+                output.data = DecompressDBPF(arbBuf, 0, output.size, output.decompressedSize);
+                output.exists = true;
+            }
+            else
+            {
+                // if no, load data directly from indexed location
+                arbBuf = new byte[output.size];
+                file.Read(arbBuf, 0, (int)output.size);
+
+                output.data = arbBuf;
+                output.exists = true;
+            }
+            output.type = type;
+
+            return output;
+        }
         public static byte[] DecompressDBPF(byte[] compressed, uint fileOffset, uint compressedSize, uint decompressedSize)
         {
             // https://wiki.sc4devotion.com/index.php?title=DBPF_Compression
 
-            Console.WriteLine("");
-            Console.WriteLine("Decompressing..");
+            //Console.WriteLine("");
+            //Console.WriteLine("Decompressing..");
 
             int i = 0;      //iterator
             byte[] arbBuf;  //byte buffer of arbitrary size
@@ -351,33 +579,64 @@ namespace OpenSC4
             while (seeking)
             {
                 file.Read(buffer32, 0, 4);
-                uint typeID = ToInt32LittleEndian(buffer32, 0);
+                uint t = ToInt32LittleEndian(buffer32, 0);      // typeID
                 file.Read(buffer32, 0, 4);
-                uint groupID = ToInt32LittleEndian(buffer32, 0);
+                uint g = ToInt32LittleEndian(buffer32, 0);      // groupID
                 file.Read(buffer32, 0, 4);
-                uint instanceID = ToInt32LittleEndian(buffer32, 0);
+                uint i = ToInt32LittleEndian(buffer32, 0);      // instanceID
                 file.Read(buffer32, 0, 4);
-                uint fileLocation = ToInt32LittleEndian(buffer32, 0);
+                uint fl = ToInt32LittleEndian(buffer32, 0);     // file location (offset where file starts)
                 file.Read(buffer32, 0, 4);
-                uint fileSize = ToInt32LittleEndian(buffer32, 0);
+                uint fs = ToInt32LittleEndian(buffer32, 0);     // file size
 
-                if (typeID == 2849861620)
+                if (ResolveIdentifiers(t, g, i) == SubfileTypes.TerrainMap)
                 {
-                    if (groupID == 3918501157)
-                    {
-                        if (instanceID == 1)
-                        {
-                            outOffset = fileLocation;
-                            outSize = fileSize;
-                            break;
-                        }
-                    }
+                    outOffset = fl;
+                    outSize = fs;
+                    break;
                 }
                 if (file.Position >= off + siz)
                     break;
             }
 
             return new uint[] { outOffset, outSize };
+        }
+        public static FileRef GetDirSubfile(FileStream file, FileRef index)
+        {
+            return ReadIndex(file, index, SubfileTypes.Directory);
+        }
+        public static FileRef ReadIndex(FileStream file, FileRef index, SubfileTypes type)   // look for a specific subfile in index
+        {
+            byte[] buffer32 = new byte[4];  // 32-bit (4 byte) buffer
+            FileRef output = new FileRef();      // output FileRef
+            bool seeking = true;
+
+            file.Seek(index.position, SeekOrigin.Begin);
+
+            while (seeking)
+            {
+                file.Read(buffer32, 0, 4);
+                uint tID = ToInt32LittleEndian(buffer32, 0);      // typeID
+                file.Read(buffer32, 0, 4);
+                uint gID = ToInt32LittleEndian(buffer32, 0);      // groupID
+                file.Read(buffer32, 0, 4);
+                uint iID = ToInt32LittleEndian(buffer32, 0);      // instanceID
+                file.Read(buffer32, 0, 4);
+                uint fl = ToInt32LittleEndian(buffer32, 0);     // file location (offset where file starts)
+                file.Read(buffer32, 0, 4);
+                uint fs = ToInt32LittleEndian(buffer32, 0);     // file size
+
+                if (ResolveIdentifiers(tID, gID, iID) == type)
+                {
+                    output.position = fl;
+                    output.size = fs;
+                    output.exists = true;
+                    break;
+                }
+                if (file.Position >= index.position + index.size)
+                    break;
+            }
+            return output;
         }
         public static uint[] CheckForDBPFCompression(uint indexOffset, uint indexSize, FileStream file)
         {
@@ -392,27 +651,21 @@ namespace OpenSC4
             while (seeking)
             {
                 file.Read(buffer32, 0, 4);
-                uint typeID = ToInt32LittleEndian(buffer32, 0);
+                uint t = ToInt32LittleEndian(buffer32, 0);      // typeID
                 file.Read(buffer32, 0, 4);
-                uint groupID = ToInt32LittleEndian(buffer32, 0);
+                uint g = ToInt32LittleEndian(buffer32, 0);      // groupID
                 file.Read(buffer32, 0, 4);
-                uint instanceID = ToInt32LittleEndian(buffer32, 0);
+                uint i = ToInt32LittleEndian(buffer32, 0);      // instanceID
                 file.Read(buffer32, 0, 4);
-                uint fileLocation = ToInt32LittleEndian(buffer32, 0);
+                uint fl = ToInt32LittleEndian(buffer32, 0);     // file location (offset where file starts)
                 file.Read(buffer32, 0, 4);
-                uint fileSize = ToInt32LittleEndian(buffer32, 0);
+                uint fs = ToInt32LittleEndian(buffer32, 0);     // file size
 
-                if (typeID == 3899334383)
+                if (ResolveIdentifiers(t, g, i) == SubfileTypes.Directory)
                 {
-                    if (groupID == 3899334383)
-                    {
-                        if (instanceID == 678108931)
-                        {
-                            outOffset = fileLocation;
-                            outSize = fileSize;
-                            break;
-                        }
-                    }
+                    outOffset = fl;
+                    outSize = fs;
+                    break;
                 }
                 if (file.Position >= indexOffset + indexSize)
                     break;
@@ -420,36 +673,31 @@ namespace OpenSC4
 
             return new uint[] { outOffset, outSize };
         }
-        public static uint FindCompressedTerrainData(uint off, uint siz, FileStream file)
+        public static uint FindCompressedSubfile(FileStream file, FileRef dir, SubfileTypes type)
         {
             byte[] buffer32 = new byte[4];
             bool seeking = true;
-            file.Seek(off, SeekOrigin.Begin);
+            file.Seek(dir.position, SeekOrigin.Begin);
 
             uint outSize = 0;
 
             while (seeking)
             {
                 file.Read(buffer32, 0, 4);
-                uint typeID = ToInt32LittleEndian(buffer32, 0);
+                uint t = ToInt32LittleEndian(buffer32, 0);  // typeID
                 file.Read(buffer32, 0, 4);
-                uint groupID = ToInt32LittleEndian(buffer32, 0);
+                uint g = ToInt32LittleEndian(buffer32, 0);  // groupID
                 file.Read(buffer32, 0, 4);
-                uint instanceID = ToInt32LittleEndian(buffer32, 0);
+                uint i = ToInt32LittleEndian(buffer32, 0); // instanceID
                 file.Read(buffer32, 0, 4);
                 uint uncompressedSize = ToInt32LittleEndian(buffer32, 0);
 
-                if (typeID == 2849861620)
+                if (ResolveIdentifiers(t, g, i) == type)
                 {
-                    if (groupID == 3918501157)
-                    {
-                        if (instanceID == 1)
-                        {
-                            outSize = uncompressedSize;
-                        }
-                    }
+                    outSize = uncompressedSize;
+                    
                 }
-                if (file.Position >= off + siz)
+                if (file.Position >= dir.position + dir.size)
                     break;
             }
 
