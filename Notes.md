@@ -1,3 +1,8 @@
+These notes are from 2024, and are about the translation of geometry from SC4 to TS2 Neighborhood View to TS2 Lot View
+Long term I'd like this tool to end up as a way to fine tune lots, roads, and terrain with highly detailed info on whether/how it will work in game.
+
+## Notes
+
 beach lots
 
 at least 3 squares (1 sc4 square gap) away from water
